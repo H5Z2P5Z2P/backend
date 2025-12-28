@@ -1,5 +1,8 @@
 // Shadowsocks Protocol Settings
 export interface ShadowsocksSettings {
+    password?: string; // Server master key (required for SS2022 multi-user)
+    method?: string;
+    network?: string;
     clients: ShadowsocksUser[];
 }
 

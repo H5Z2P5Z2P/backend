@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { SubscriptionTemplateService } from '../subscription-template.service';
+import { adaptSSPassword, combineSSPassword } from '@common/helpers/xray-config';
+import { StreamSettingsObject } from '@common/helpers/xray-config/interfaces/transport.config';
 import { IFormattedHost } from './interfaces/formatted-hosts.interface';
 
 interface StreamSettings {
@@ -38,6 +40,11 @@ interface OutboundSettings {
         method?: string;
         uot?: boolean;
         ivCheck?: boolean;
+        udp?: boolean;
+        users?: Array<{
+            user?: string;
+            pass?: string;
+        }>;
     }>;
 }
 
@@ -61,7 +68,7 @@ interface XrayJsonConfig {
 export class XrayJsonGeneratorService {
     private readonly logger = new Logger(XrayJsonGeneratorService.name);
 
-    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) {}
+    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) { }
 
     public async generateConfig(
         hosts: IFormattedHost[],
@@ -107,12 +114,19 @@ export class XrayJsonGeneratorService {
         try {
             const outbounds: Outbound[] = [];
 
+            const protocol = host.protocol === 'mixed' ? 'socks' : host.protocol;
+
             const mainOutbound: Outbound = {
                 tag: 'proxy',
-                protocol: host.protocol,
+                protocol,
                 settings: this.createOutboundSettings(host),
-                streamSettings: this.createStreamSettings(host),
             };
+
+            const streamSettings = this.createStreamSettings(host);
+
+            if (streamSettings) {
+                mainOutbound.streamSettings = streamSettings;
+            }
 
             if (
                 host.muxParams !== null &&
@@ -172,26 +186,59 @@ export class XrayJsonGeneratorService {
                     ],
                 };
 
-            case 'shadowsocks':
+            case 'shadowsocks': {
+                const method = host.encryption || '2022-blake3-aes-256-gcm';
                 return {
                     servers: [
                         {
                             address: host.address,
                             port: host.port,
-                            password: host.password.ssPassword,
-                            method: 'chacha20-ietf-poly1305',
+                            password: combineSSPassword(
+                                host.password.ssPassword,
+                                host.ssServerPassword,
+                                method,
+                            ),
+                            method: method,
                             uot: false,
                             ivCheck: false,
                         },
                     ],
                 };
+            }
 
             default:
                 return { vnext: [] };
+
+            case 'mixed': {
+                const credentials = host.socksCredentials;
+
+                return {
+                    servers: [
+                        {
+                            address: host.address,
+                            port: host.port,
+                            udp: credentials?.udp,
+                            users:
+                                credentials && (credentials.username || credentials.password)
+                                    ? [
+                                        {
+                                            user: credentials.username,
+                                            pass: credentials.password,
+                                        },
+                                    ]
+                                    : undefined,
+                        },
+                    ],
+                };
+            }
         }
     }
 
-    private createStreamSettings(host: IFormattedHost): StreamSettings {
+    private createStreamSettings(host: IFormattedHost): StreamSettings | undefined {
+        if (host.protocol === 'mixed') {
+            return undefined;
+        }
+
         const streamSettings: StreamSettings = {
             network: host.network || 'tcp',
         };

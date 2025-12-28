@@ -21,7 +21,7 @@ export class AddUserToNodeHandler implements IEventHandler<AddUserToNodeEvent> {
         private readonly nodesRepository: NodesRepository,
         private readonly nodesQueuesService: NodesQueuesService,
         private readonly queryBus: QueryBus,
-    ) {}
+    ) { }
     async handle(event: AddUserToNodeEvent) {
         try {
             const userEntity = await this.queryBus.execute(
@@ -75,7 +75,9 @@ export class AddUserToNodeHandler implements IEventHandler<AddUserToNodeEvent> {
                                 username: tId.toString(),
                                 password: ssPassword,
                                 tag: inbound.tag,
-                                cipherType: CipherType.CHACHA20_POLY1305,
+                                cipherType:
+                                    (inbound.rawInbound as any)?.settings?.method ||
+                                    CipherType.CHACHA20_POLY1305,
                                 ivCheck: false,
                             };
                         default:

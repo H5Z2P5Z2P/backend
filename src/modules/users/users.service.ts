@@ -1,6 +1,6 @@
 import type { Cache } from 'cache-manager';
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { customAlphabet } from 'nanoid';
 import dayjs from 'dayjs';
@@ -66,12 +66,33 @@ export class UsersService {
 
     public async createUser(dto: CreateUserRequestDto): Promise<TResult<UserEntity>> {
         try {
+            let ssPassword = dto.ssPassword;
+
+            if (!ssPassword) {
+                if (dto.activeInternalSquads && dto.activeInternalSquads.length > 0) {
+                    const method = await this.userRepository.getEncryptionMethodForSquads(
+                        dto.activeInternalSquads,
+                    );
+                    if (method) {
+                        try {
+                            ssPassword = this.generateSSKey(method);
+                        } catch {
+                            ssPassword = this.generateSSKey('2022-blake3-aes-256-gcm');
+                        }
+                    } else {
+                        ssPassword = this.generateSSKey('2022-blake3-aes-256-gcm');
+                    }
+                } else {
+                    ssPassword = this.generateSSKey('2022-blake3-aes-256-gcm');
+                }
+            }
+
             const userEntity = new BaseUserEntity({
                 username: dto.username,
                 shortUuid: dto.shortUuid || this.createNanoId(),
-                trojanPassword: dto.trojanPassword || this.createPassword(),
+                trojanPassword: dto.trojanPassword || this.createTrojanPassword(),
                 vlessUuid: dto.vlessUuid || this.createUuid(),
-                ssPassword: dto.ssPassword || this.createPassword(),
+                ssPassword: ssPassword,
                 status: dto.status,
                 trafficLimitBytes: wrapBigInt(dto.trafficLimitBytes),
                 trafficLimitStrategy: dto.trafficLimitStrategy,
@@ -312,19 +333,33 @@ export class UsersService {
         shortUuid?: string,
     ): Promise<TResult<UserEntity>> {
         try {
-            const user = await this.userRepository.getPartialUserByUniqueFields(
-                { uuid: userUuid },
-                ['uuid', 'vlessUuid'],
-            );
+            const user = await this.userRepository.findUniqueByCriteria({ uuid: userUuid }, {
+                activeInternalSquads: true,
+            });
 
             if (!user) return fail(ERRORS.USER_NOT_FOUND);
+
+            let ssPassword = this.generateSSKey('2022-blake3-aes-256-gcm');
+            if (user.activeInternalSquads && user.activeInternalSquads.length > 0) {
+                const squadUuids = user.activeInternalSquads.map(s => s.uuid);
+                const method = await this.userRepository.getEncryptionMethodForSquads(squadUuids);
+
+                if (method) {
+                    try {
+                        ssPassword = this.generateSSKey(method);
+                    } catch {
+                        // Fallback or ignore if fails
+                        ssPassword = this.generateSSKey('2022-blake3-aes-256-gcm');
+                    }
+                }
+            }
 
             const updateResult = await this.userRepository.revokeUserSubscription({
                 uuid: user.uuid,
                 shortUuid: shortUuid ?? this.createNanoId(),
-                trojanPassword: this.createPassword(),
+                trojanPassword: this.createTrojanPassword(),
                 vlessUuid: this.createUuid(),
-                ssPassword: this.createPassword(),
+                ssPassword: ssPassword,
                 subRevokedAt: new Date(),
                 subLastOpenedAt: null,
                 subLastUserAgent: null,
@@ -784,11 +819,20 @@ export class UsersService {
         return nanoid();
     }
 
-    private createPassword(length: number = 32): string {
+    private createTrojanPassword(length: number = 32): string {
         const alphabet = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ_abcdefghjkmnopqrstuvwxyz-';
         const nanoid = customAlphabet(alphabet, length);
 
         return nanoid();
+    }
+
+    public generateSSKey(method: string): string {
+        // Logic: if method contains '128' -> 16 bytes, else 32 bytes
+        // (default chacha20, aes-256 uses 32 bytes)
+        const is128 = method && method.includes('128');
+        const length = is128 ? 16 : 32;
+
+        return randomBytes(length).toString('base64');
     }
 
     private async invalidateShortUuidRangeCache(shortUuid: string): Promise<void> {

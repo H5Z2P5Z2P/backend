@@ -25,7 +25,7 @@ export class GetPreparedConfigWithUsersHandler implements IQueryHandler<
     constructor(
         private readonly usersRepository: UsersRepository,
         private readonly queryBus: QueryBus,
-    ) {}
+    ) { }
 
     async execute(
         query: GetPreparedConfigWithUsersQuery,

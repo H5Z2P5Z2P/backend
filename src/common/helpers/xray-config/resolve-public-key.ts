@@ -76,6 +76,13 @@ export async function resolveEncryptionFromDecryption(
 
     for (const inbound of inbounds) {
         try {
+            if (inbound.protocol === 'shadowsocks') {
+                if (inbound.settings && inbound.settings.method) {
+                    encryptionMap.set(inbound.tag, inbound.settings.method);
+                }
+                continue;
+            }
+
             if (inbound.protocol !== 'vless') {
                 continue;
             }
@@ -105,6 +112,34 @@ export async function resolveEncryptionFromDecryption(
     }
 
     return encryptionMap;
+}
+
+/**
+ * Extracts the server password from Shadowsocks inbounds.
+ * Required for SS2022 multi-user mode where client password format is "serverPsk:userPsk".
+ */
+export async function resolveSSServerPassword(
+    inbounds: any[],
+): Promise<Map<string, string>> {
+    const serverPasswordMap = new Map<string, string>();
+
+    for (const inbound of inbounds) {
+        try {
+            if (inbound.protocol !== 'shadowsocks') {
+                continue;
+            }
+
+            if (!inbound.settings || !inbound.settings.password) {
+                continue;
+            }
+
+            serverPasswordMap.set(inbound.tag, inbound.settings.password);
+        } catch {
+            continue;
+        }
+    }
+
+    return serverPasswordMap;
 }
 
 async function createX25519KeyPairFromBase64(base64PrivateKey: string): Promise<{

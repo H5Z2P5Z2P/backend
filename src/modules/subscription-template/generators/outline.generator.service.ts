@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { IFormattedHost } from './interfaces';
+import { adaptSSPassword, combineSSPassword } from '@common/helpers/xray-config';
 
 interface OutlineOutbound {
     method: string;
@@ -27,8 +28,12 @@ export class OutlineGeneratorService {
                 const outbound = this.makeOutbound(
                     host.address,
                     host.port,
-                    host.password.ssPassword,
-                    'chacha20-ietf-poly1305',
+                    combineSSPassword(
+                        host.password.ssPassword,
+                        host.ssServerPassword,
+                        host.encryption || '2022-blake3-aes-256-gcm',
+                    ),
+                    host.encryption || '2022-blake3-aes-256-gcm',
                 );
 
                 if (!decodedTag) {

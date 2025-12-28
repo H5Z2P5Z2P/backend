@@ -2,12 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { IFormattedHost } from './interfaces/formatted-hosts.interface';
 import { IRawHost } from './interfaces';
+import { adaptSSPassword, combineSSPassword } from '@common/helpers/xray-config';
 
 @Injectable()
 export class RawHostsGeneratorService {
     private readonly logger = new Logger(RawHostsGeneratorService.name);
 
-    constructor() {}
+    constructor() { }
 
     public async generateConfig(hosts: IFormattedHost[]): Promise<IRawHost[]> {
         const rawHosts: IRawHost[] = [];
@@ -22,9 +23,15 @@ export class RawHostsGeneratorService {
                 };
 
                 if (host.protocol === 'shadowsocks') {
+                    const method = host.encryption || '2022-blake3-aes-256-gcm';
+                    rawHost.password.ssPassword = combineSSPassword(
+                        host.password.ssPassword,
+                        host.ssServerPassword,
+                        method,
+                    );
                     rawHost.protocolOptions = {
                         ss: {
-                            method: 'chacha20-ietf-poly1305',
+                            method: method,
                         },
                     };
                 }

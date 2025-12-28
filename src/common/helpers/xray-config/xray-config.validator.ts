@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { HashedSet } from '@remnawave/hashed-set';
 
 import { getVlessFlow } from '@common/utils/flow/get-vless-flow';
+import { adaptSSPassword } from './adapt-ss-password';
 
 import { UserForConfigEntity } from '@modules/users/entities/users-for-config';
 
@@ -360,17 +361,43 @@ export class XRayConfig {
                     });
                 }
                 break;
-            case 'shadowsocks':
-                (inbound.settings as ShadowsocksSettings).clients ??= [];
+            case 'shadowsocks': {
+                const ssSettings = inbound.settings as ShadowsocksSettings;
+                ssSettings.clients ??= [];
+                const method =
+                    ssSettings.method ||
+                    (inbound as any).method ||
+                    '2022-blake3-aes-256-gcm';
+
+                ssSettings.method = method;
+
+                // SS2022 multi-user mode requires clients to have empty method field
+                const isSS2022 = method.startsWith('2022-');
+
+                // For SS2022, ensure server password exists (from original inbound config)
+                // The password should be set in the ConfigProfile's inbound settings
+                if (isSS2022 && !ssSettings.password) {
+                    // Server password must be configured in the inbound settings
+                    // If missing, the config is invalid for SS2022 multi-user
+                    console.warn(
+                        `[XRayConfig] SS2022 inbound "${inbound.tag}" missing server password in settings`,
+                    );
+                }
+
                 for (const user of users) {
-                    (inbound.settings as ShadowsocksSettings).clients.push({
-                        password: user.ssPassword,
-                        method: 'chacha20-ietf-poly1305',
+                    const clientObj: any = {
+                        password: adaptSSPassword(user.ssPassword, method),
                         email: user.tId.toString(),
                         id: user.vlessUuid,
-                    });
+                    };
+                    // Only set method for legacy SS, not SS2022
+                    if (!isSS2022) {
+                        clientObj.method = method;
+                    }
+                    ssSettings.clients.push(clientObj);
                 }
                 break;
+            }
             default:
                 throw new Error(`Protocol ${inbound.protocol} is not supported.`);
         }

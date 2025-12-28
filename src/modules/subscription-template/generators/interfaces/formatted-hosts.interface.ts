@@ -37,10 +37,17 @@ export interface IFormattedHost {
     dbData?: IDbHostData;
     mldsa65Verify?: string;
     encryption?: string;
+    ssServerPassword?: string; // Server PSK for SS2022 multi-user mode
     flow?: 'xtls-rprx-vision' | '';
     xrayJsonTemplate?: object | null;
     rawSettings?: {
         headerType?: string;
         request?: object;
+    };
+    socksCredentials?: {
+        username?: string;
+        password?: string;
+        auth?: string;
+        udp?: boolean;
     };
 }

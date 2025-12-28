@@ -59,9 +59,9 @@ export namespace CreateUserCommand {
                 invalid_type_error: 'SS password must be a string',
             })
             .min(8, 'SS password must be at least 8 characters')
-            .max(32, 'SS password must be less than 32 characters')
+            .max(64, 'SS password must be less than 64 characters')
             .optional()
-            .describe('Optional. Password for Shadowsocks protocol. Must be 8-32 characters.'),
+            .describe('Optional. Password for Shadowsocks protocol. Must be 8-64 characters.'),
         trafficLimitBytes: z
             .number({
                 invalid_type_error: 'Traffic limit must be a number',

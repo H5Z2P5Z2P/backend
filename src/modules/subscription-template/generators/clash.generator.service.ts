@@ -3,6 +3,8 @@ import _ from 'lodash';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { adaptSSPassword, combineSSPassword } from '@common/helpers/xray-config';
+
 import { SubscriptionTemplateService } from '@modules/subscription-template/subscription-template.service';
 
 import { IFormattedHost } from './interfaces/formatted-hosts.interface';
@@ -51,7 +53,7 @@ export interface ClashData {
 export class ClashGeneratorService {
     private readonly logger = new Logger(ClashGeneratorService.name);
 
-    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) {}
+    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) { }
 
     public async generateConfig(
         hosts: IFormattedHost[],
@@ -187,10 +189,12 @@ export class ClashGeneratorService {
             case 'trojan':
                 node.password = host.password.trojanPassword;
                 break;
-            case 'shadowsocks':
-                node.password = host.password.ssPassword;
-                node.cipher = 'chacha20-ietf-poly1305';
+            case 'shadowsocks': {
+                const cipher = host.encryption || '2022-blake3-aes-256-gcm';
+                node.cipher = cipher;
+                node.password = combineSSPassword(host.password.ssPassword, host.ssServerPassword, cipher);
                 break;
+            }
             default:
                 return;
         }

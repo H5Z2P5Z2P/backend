@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
+import { adaptSSPassword, combineSSPassword } from '@common/helpers/xray-config';
+
 import { SubscriptionTemplateService } from '@modules/subscription-template/subscription-template.service';
 
 import { IFormattedHost } from './interfaces';
@@ -22,6 +24,10 @@ interface OutboundConfig {
     path?: string;
     max_early_data?: number;
     early_data_header_name?: string;
+    username?: string;
+    udp?: boolean;
+    version?: string;
+    authentication?: string;
 }
 
 interface TlsConfig {
@@ -52,7 +58,7 @@ interface TransportConfig {
 
 @Injectable()
 export class SingBoxGeneratorService {
-    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) {}
+    constructor(private readonly subscriptionTemplateService: SubscriptionTemplateService) { }
 
     public async generateConfig(
         hosts: IFormattedHost[],
@@ -85,7 +91,7 @@ export class SingBoxGeneratorService {
     }
 
     private renderConfig(config: Record<string, any>): string {
-        const urltest_types = ['vless', 'trojan', 'shadowsocks'];
+        const urltest_types = ['vless', 'trojan', 'shadowsocks', 'socks'];
         const urltest_tags = config.outbounds
             .filter((outbound: OutboundConfig) => urltest_types.includes(outbound.type))
             .map((outbound: OutboundConfig) => outbound.tag);
@@ -248,12 +254,38 @@ export class SingBoxGeneratorService {
     }
 
     private makeOutbound(params: IFormattedHost, settings?: Record<string, any>): OutboundConfig {
+        const protocol = params.protocol === 'mixed' ? 'socks' : params.protocol;
+
         const config: OutboundConfig = {
-            type: params.protocol,
+            type: protocol,
             tag: params.remark,
             server: params.address,
             server_port: params.port,
         };
+
+        if (protocol === 'socks') {
+            const credentials = params.socksCredentials;
+
+            config.version = 'socks5';
+            config.udp = credentials?.udp ?? true;
+            config.authentication =
+                credentials?.auth && credentials.auth !== 'password'
+                    ? credentials.auth
+                    : 'password';
+
+            const authRequiresCredentials =
+                credentials?.auth === undefined || credentials?.auth === 'password';
+
+            if (authRequiresCredentials && credentials?.username) {
+                config.username = credentials.username;
+            }
+
+            if (authRequiresCredentials && credentials?.password) {
+                config.password = credentials.password;
+            }
+
+            return config;
+        }
 
         if (params.flow === 'xtls-rprx-vision') {
             config.flow = params.flow;
@@ -320,10 +352,12 @@ export class SingBoxGeneratorService {
                 case 'trojan':
                     outbound.password = host.password.trojanPassword;
                     break;
-                case 'shadowsocks':
-                    outbound.password = host.password.ssPassword;
-                    outbound.method = 'chacha20-ietf-poly1305';
+                case 'shadowsocks': {
+                    const method = host.encryption || '2022-blake3-aes-256-gcm';
+                    outbound.method = method;
+                    outbound.password = combineSSPassword(host.password.ssPassword, host.ssServerPassword, method);
                     break;
+                }
             }
 
             this.addOutbound(config, outbound);

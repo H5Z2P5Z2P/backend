@@ -17,6 +17,7 @@ import {
     resolveEncryptionFromDecryption,
     resolveInboundAndMlDsa65PublicKey,
     resolveInboundAndPublicKey,
+    resolveSSServerPassword,
 } from '@common/helpers/xray-config';
 import { RawObject } from '@common/helpers/xray-config/interfaces/transport.config';
 import { TemplateEngine } from '@common/utils/templates/replace-templates-values';
@@ -119,6 +120,9 @@ export class FormatHostsService {
             hosts.map((host) => host.rawInbound),
         );
         const encryptionMap = await resolveEncryptionFromDecryption(
+            hosts.map((host) => host.rawInbound),
+        );
+        const ssServerPasswordMap = await resolveSSServerPassword(
             hosts.map((host) => host.rawInbound),
         );
 
@@ -464,6 +468,7 @@ export class FormatHostsService {
                 dbData,
                 mldsa65Verify: mldsa65PublicKeyFromConfig,
                 encryption: encryptionMap.get(inputHost.inboundTag),
+                ssServerPassword: ssServerPasswordMap.get(inputHost.inboundTag),
                 flow: getVlessFlow(inbound),
                 xrayJsonTemplate: inputHost.xrayJsonTemplate,
             });
