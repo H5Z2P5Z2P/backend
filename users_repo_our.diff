@@ -1,0 +1,64 @@
+diff --git a/src/modules/users/repositories/users.repository.ts b/src/modules/users/repositories/users.repository.ts
+index 3f156a90..62cb4adc 100644
+--- a/src/modules/users/repositories/users.repository.ts
++++ b/src/modules/users/repositories/users.repository.ts
+@@ -42,7 +42,7 @@ export class UsersRepository {
+         private readonly prisma: TransactionHost<TransactionalAdapterPrisma>,
+         private readonly qb: TxKyselyService,
+         private readonly userConverter: UserConverter,
+-    ) {}
++    ) { }
+ 
+     public async create(
+         entity: BaseUserEntity,
+@@ -515,8 +515,8 @@ export class UsersRepository {
+         includeOptions: {
+             activeInternalSquads: boolean;
+         } = {
+-            activeInternalSquads: true,
+-        },
++                activeInternalSquads: true,
++            },
+     ): Promise<UserEntity | null> {
+         const result = await this.qb.kysely
+             .selectFrom('users')
+@@ -549,8 +549,8 @@ export class UsersRepository {
+         includeOptions: {
+             activeInternalSquads: boolean;
+         } = {
+-            activeInternalSquads: true,
+-        },
++                activeInternalSquads: true,
++            },
+     ): Promise<UserEntity[]> {
+         const user = await this.qb.kysely
+             .selectFrom('users')
+@@ -1329,4 +1329,28 @@ export class UsersRepository {
+ 
+         return result.subpageConfigUuid;
+     }
++    public async getEncryptionMethodForSquads(squadUuids: string[]): Promise<string | null> {
++        if (squadUuids.length === 0) return null;
++
++        const result = await this.qb.kysely
++            .selectFrom('configProfileInbounds')
++            .innerJoin(
++                'internalSquadInbounds',
++                'internalSquadInbounds.inboundUuid',
++                'configProfileInbounds.uuid',
++            )
++            .where(
++                'internalSquadInbounds.internalSquadUuid',
++                'in',
++                squadUuids.map((uuid) => getKyselyUuid(uuid)),
++            )
++            .where('configProfileInbounds.type', '=', 'shadowsocks')
++            .select('configProfileInbounds.rawInbound')
++            .executeTakeFirst();
++
++        if (!result || !result.rawInbound) return null;
++
++        const raw = result.rawInbound as any;
++        return raw?.settings?.method || raw?.method || null;
++    }
+ }

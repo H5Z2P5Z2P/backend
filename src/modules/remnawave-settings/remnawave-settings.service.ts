@@ -77,7 +77,11 @@ export class RemnawaveSettingsService {
                 settings.oauth2Settings.yandex,
             ];
 
-            const genericOAuth2Providers = [settings.oauth2Settings.pocketid];
+            const genericOAuth2Providers = [
+                settings.oauth2Settings.pocketid,
+                settings.oauth2Settings.keycloak,
+                settings.oauth2Settings.generic,
+            ];
 
             // Test 1: At least one authentication method must be enabled
             if (
@@ -85,8 +89,10 @@ export class RemnawaveSettingsService {
                 !settings.oauth2Settings.github.enabled &&
                 !settings.oauth2Settings.pocketid.enabled &&
                 !settings.oauth2Settings.yandex.enabled &&
+                !settings.oauth2Settings.keycloak.enabled &&
                 !settings.tgAuthSettings.enabled &&
-                !settings.passwordSettings.enabled
+                !settings.passwordSettings.enabled &&
+                !settings.oauth2Settings.generic.enabled
             ) {
                 return {
                     valid: false,
@@ -106,8 +112,17 @@ export class RemnawaveSettingsService {
             }
 
             // Test 3: Check up required fields for OAuth2 authentication
-
             for (const provider of oauth2Providers) {
+                if (provider.enabled && (!provider.clientId || !provider.clientSecret)) {
+                    return {
+                        valid: false,
+                        error: `[OAuth2] ClientID and ClientSecret must be set in order to use authentication. Please set required fields or disable misconfigured OAuth2 provider.`,
+                    };
+                }
+            }
+
+            // Test 3.1: Check up required fields for Generic OAuth2 authentication
+            for (const provider of genericOAuth2Providers) {
                 if (provider.enabled && (!provider.clientId || !provider.clientSecret)) {
                     return {
                         valid: false,
@@ -125,6 +140,20 @@ export class RemnawaveSettingsService {
                     valid: false,
                     error: '[PocketID] Plain domain must be set in order to use PocketID authentication.',
                 };
+            }
+
+            // Test 4.1: Check up required fields for Keycloak authentication
+            if (settings.oauth2Settings.keycloak.enabled) {
+                if (
+                    !settings.oauth2Settings.keycloak.frontendDomain ||
+                    !settings.oauth2Settings.keycloak.keycloakDomain ||
+                    !settings.oauth2Settings.keycloak.realm
+                ) {
+                    return {
+                        valid: false,
+                        error: '[Keycloak] Frontend domain, Keycloak domain and Realm must be set in order to use Keycloak authentication.',
+                    };
+                }
             }
 
             // Test 5: Check up Telegram authentication
@@ -187,6 +216,20 @@ export class RemnawaveSettingsService {
                     valid: false,
                     error: `[Telegram] Admin IDs must be set in order to use Telegram authentication.`,
                 };
+            }
+
+            // Test 10: Generic OAuth2 with PKCE must have authorization URL and token URL
+            if (settings.oauth2Settings.generic.enabled) {
+                if (
+                    !settings.oauth2Settings.generic.authorizationUrl ||
+                    !settings.oauth2Settings.generic.tokenUrl ||
+                    !settings.oauth2Settings.generic.frontendDomain
+                ) {
+                    return {
+                        valid: false,
+                        error: `[Generic OAuth2] Authorization URL, token URL and frontend domain must be set in order to use Generic OAuth2 authentication.`,
+                    };
+                }
             }
 
             return {

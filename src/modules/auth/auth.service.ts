@@ -29,6 +29,7 @@ import {
     TOAuth2ProvidersKeys,
 } from '@libs/contracts/constants';
 import { ERRORS } from '@libs/contracts/constants/errors';
+import { AUTH_ROUTES } from '@libs/contracts/api';
 
 import { ServiceEvent } from '@integration-modules/notifications/interfaces';
 
@@ -51,6 +52,7 @@ import { ILogin, IRegister } from './interfaces';
 
 const scryptAsync = promisify(scrypt);
 const REMNAWAVE_CUSTOM_CLAIM_KEY = 'remnawaveAccess';
+const OAUTH2_SCOPES = ['email', 'profile', 'openid'];
 
 @Injectable()
 export class AuthService {
@@ -269,6 +271,10 @@ export class AuthService {
                                     remnawaveSettings.oauth2Settings.pocketid.enabled,
                                 [OAUTH2_PROVIDERS.YANDEX]:
                                     remnawaveSettings.oauth2Settings.yandex.enabled,
+                                [OAUTH2_PROVIDERS.KEYCLOAK]:
+                                    remnawaveSettings.oauth2Settings.keycloak.enabled,
+                                [OAUTH2_PROVIDERS.GENERIC]:
+                                    remnawaveSettings.oauth2Settings.generic.enabled,
                             },
                         },
                         password: {
@@ -408,15 +414,11 @@ export class AuthService {
                 return fail(ERRORS.GET_AUTH_STATUS_ERROR);
             }
 
-            if (!statusResponse.response.isLoginAllowed) {
-                return fail(ERRORS.FORBIDDEN);
-            }
-
-            if (!statusResponse.response.authentication) {
-                return fail(ERRORS.FORBIDDEN);
-            }
-
-            if (!statusResponse.response.authentication?.oauth2.providers[provider]) {
+            if (
+                !statusResponse.response.isLoginAllowed ||
+                !statusResponse.response.authentication ||
+                !statusResponse.response.authentication?.oauth2.providers[provider]
+            ) {
                 return fail(ERRORS.FORBIDDEN);
             }
 
@@ -440,15 +442,15 @@ export class AuthService {
                     stateKey = `oauth2:${OAUTH2_PROVIDERS.GITHUB}`;
                     break;
                 case OAUTH2_PROVIDERS.POCKETID:
-                    const pocketIdClient = new arctic.OAuth2Client(
-                        remnawaveSettings.oauth2Settings.pocketid.clientId!,
-                        remnawaveSettings.oauth2Settings.pocketid.clientSecret!,
-                        null,
+                    const pocketIdClient = await this.getGenericOAuth2Client(
+                        remnawaveSettings,
+                        true,
                     );
+
                     authorizationURL = pocketIdClient.createAuthorizationURL(
                         `https://${remnawaveSettings.oauth2Settings.pocketid.plainDomain}/authorize`,
                         state,
-                        ['email', 'profile'],
+                        OAUTH2_SCOPES,
                     );
                     stateKey = `oauth2:${OAUTH2_PROVIDERS.POCKETID}`;
                     break;
@@ -460,6 +462,55 @@ export class AuthService {
                     );
                     authorizationURL = yandexClient.createAuthorizationURL(state, ['login:email']);
                     stateKey = `oauth2:${OAUTH2_PROVIDERS.YANDEX}`;
+                    break;
+                case OAUTH2_PROVIDERS.KEYCLOAK:
+                    const codeVerifier = arctic.generateCodeVerifier();
+
+                    const keycloakClient = await this.getKeyCloakClient(remnawaveSettings);
+                    authorizationURL = keycloakClient.createAuthorizationURL(
+                        state,
+                        codeVerifier,
+                        OAUTH2_SCOPES,
+                    );
+
+                    stateKey = `oauth2:${OAUTH2_PROVIDERS.KEYCLOAK}`;
+                    await this.cacheManager.set(`${stateKey}:codeVerifier`, codeVerifier, 600_000);
+
+                    break;
+                case OAUTH2_PROVIDERS.GENERIC:
+                    const authorizationEndpoint =
+                        remnawaveSettings.oauth2Settings.generic.authorizationUrl!;
+                    const genericOAuth2Client =
+                        await this.getGenericOAuth2Client(remnawaveSettings);
+
+                    switch (remnawaveSettings.oauth2Settings.generic.withPkce) {
+                        case false:
+                            authorizationURL = genericOAuth2Client.createAuthorizationURL(
+                                authorizationEndpoint,
+                                state,
+                                OAUTH2_SCOPES,
+                            );
+                            stateKey = `oauth2:${OAUTH2_PROVIDERS.GENERIC}`;
+                            break;
+                        case true:
+                            const codeVerifier = arctic.generateCodeVerifier();
+
+                            authorizationURL = genericOAuth2Client.createAuthorizationURLWithPKCE(
+                                authorizationEndpoint,
+                                state,
+                                arctic.CodeChallengeMethod.S256,
+                                codeVerifier,
+                                OAUTH2_SCOPES,
+                            );
+                            stateKey = `oauth2:${OAUTH2_PROVIDERS.GENERIC}`;
+
+                            await this.cacheManager.set(
+                                `${stateKey}:codeVerifier`,
+                                codeVerifier,
+                                600_000,
+                            );
+                            break;
+                    }
                     break;
                 default:
                     return fail(ERRORS.OAUTH2_PROVIDER_NOT_FOUND);
@@ -499,23 +550,17 @@ export class AuthService {
                     userAgent,
                     'Login is not allowed.',
                 );
-
                 return fail(ERRORS.FORBIDDEN);
             }
 
-            if (!statusResponse.response.authentication) {
-                return fail(ERRORS.FORBIDDEN);
-            }
-
-            if (!statusResponse.response.authentication.oauth2.providers[provider]) {
+            if (!statusResponse.response.authentication?.oauth2.providers[provider]) {
                 await this.emitFailedLoginAttempt(
                     'Unknown',
                     `OAuth2 provider: ${provider}`,
                     '–',
                     '–',
-                    'Someone tried to authorize with OAuth2, but the provider is disabled.',
+                    `OAuth2 provider ${provider} is disabled.`,
                 );
-
                 return fail(ERRORS.FORBIDDEN);
             }
 
@@ -526,32 +571,18 @@ export class AuthService {
                     '–',
                     ip,
                     userAgent,
-                    'Superadmin is not found.',
+                    'Superadmin not found.',
                 );
                 return fail(ERRORS.FORBIDDEN);
             }
 
-            let callbackResult: {
-                isAllowed: boolean;
-                email: string | null;
-            } = {
-                isAllowed: false,
-                email: null,
-            };
-
-            switch (provider) {
-                case OAUTH2_PROVIDERS.GITHUB:
-                    callbackResult = await this.githubCallback(code, state, ip, userAgent);
-                    break;
-                case OAUTH2_PROVIDERS.POCKETID:
-                    callbackResult = await this.pocketIdCallback(code, state, ip, userAgent);
-                    break;
-                case OAUTH2_PROVIDERS.YANDEX:
-                    callbackResult = await this.yandexCallback(code, state, ip, userAgent);
-                    break;
-                default:
-                    return fail(ERRORS.FORBIDDEN);
-            }
+            const callbackResult = await this.processOAuth2Callback(
+                provider,
+                code,
+                state,
+                ip,
+                userAgent,
+            );
 
             if (!callbackResult.isAllowed || !callbackResult.email) {
                 return fail(ERRORS.FORBIDDEN);
@@ -567,338 +598,269 @@ export class AuthService {
             );
 
             await this.emitLoginSuccess(
-                callbackResult.email!,
+                callbackResult.email,
                 ip,
                 userAgent,
                 `Logged via ${provider} OAuth2.`,
             );
 
-            return ok(
-                new OAuth2CallbackResponseModel({
-                    accessToken: jwtToken,
-                }),
-            );
+            return ok(new OAuth2CallbackResponseModel({ accessToken: jwtToken }));
         } catch (error) {
-            this.logger.error('GitHub callback error:', error);
+            this.logger.error(`OAuth2 callback error (${provider}):`, error);
             return fail(ERRORS.LOGIN_ERROR);
         }
     }
 
-    private async githubCallback(
+    private async processOAuth2Callback(
+        provider: TOAuth2ProvidersKeys,
         code: string,
         state: string,
         ip: string,
         userAgent: string,
-    ): Promise<{
-        isAllowed: boolean;
-        email: string | null;
-    }> {
-        try {
-            const stateFromCache = await this.cacheManager.get<string>(
-                `oauth2:${OAUTH2_PROVIDERS.GITHUB}`,
-            );
+    ): Promise<{ isAllowed: boolean; email: string | null }> {
+        const FAIL = { isAllowed: false, email: null };
 
-            await this.cacheManager.del(`oauth2:${OAUTH2_PROVIDERS.GITHUB}`);
+        const stateKey = `oauth2:${provider}`;
 
-            if (stateFromCache !== state) {
-                this.logger.error('OAuth2 state mismatch');
-                await this.emitFailedLoginAttempt(
-                    'Unknown',
-                    `State: ${state}`,
-                    ip,
-                    userAgent,
-                    'GitHub OAuth2 state mismatch.',
-                );
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
+        const [stateFromCache, codeVerifier] = await Promise.all([
+            this.cacheManager.get<string>(stateKey),
+            this.cacheManager.get<string>(`${stateKey}:codeVerifier`),
+        ]);
 
-            const remnawaveSettings = await this.queryBus.execute(
-                new GetCachedRemnawaveSettingsQuery(),
-            );
+        await Promise.all([
+            this.cacheManager.del(stateKey),
+            this.cacheManager.del(`${stateKey}:codeVerifier`),
+        ]);
 
-            const githubClient = new arctic.GitHub(
-                remnawaveSettings.oauth2Settings.github.clientId!,
-                remnawaveSettings.oauth2Settings.github.clientSecret!,
-                null,
-            );
-
-            const tokens = await githubClient.validateAuthorizationCode(code);
-            const accessToken = tokens.accessToken();
-
-            const { data } = await firstValueFrom(
-                this.httpService
-                    .get<
-                        {
-                            email: string;
-                            primary: boolean;
-                            verified: boolean;
-                            visibility: string | null;
-                        }[]
-                    >('https://api.github.com/user/emails', {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                            'User-Agent': 'Remnawave',
-                        },
-                    })
-                    .pipe(
-                        catchError((error: AxiosError) => {
-                            throw error.response?.data;
-                        }),
-                    ),
-            );
-
-            if (!data) {
-                this.logger.error('Failed to fetch GitHub user emails');
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
-
-            const primaryEmail = data.find((email) => email.primary)?.email;
-
-            if (!primaryEmail) {
-                await this.emitFailedLoginAttempt(
-                    'Unknown',
-                    '–',
-                    ip,
-                    userAgent,
-                    'No primary email found for GitHub user.',
-                );
-                this.logger.error('No primary email found for GitHub user');
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
-
-            if (!remnawaveSettings.oauth2Settings.github.allowedEmails.includes(primaryEmail)) {
-                await this.emitFailedLoginAttempt(
-                    primaryEmail,
-                    '–',
-                    ip,
-                    userAgent,
-                    'GitHub email is not in the allowed list.',
-                );
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
-
-            return {
-                isAllowed: true,
-                email: primaryEmail,
-            };
-        } catch (error) {
-            this.logger.error(`GitHub callback error: ${error}`);
-
-            return {
-                isAllowed: false,
-                email: null,
-            };
-        }
-    }
-
-    private async pocketIdCallback(
-        code: string,
-        state: string,
-        ip: string,
-        userAgent: string,
-    ): Promise<{
-        isAllowed: boolean;
-        email: string | null;
-    }> {
-        try {
-            const stateFromCache = await this.cacheManager.get<string | undefined>(
-                `oauth2:${OAUTH2_PROVIDERS.POCKETID}`,
-            );
-
-            await this.cacheManager.del(`oauth2:${OAUTH2_PROVIDERS.POCKETID}`);
-
-            if (stateFromCache !== state) {
-                this.logger.error('OAuth2 state mismatch');
-                await this.emitFailedLoginAttempt(
-                    'Unknown',
-                    `State: ${state}`,
-                    ip,
-                    userAgent,
-                    'PocketID OAuth2 state mismatch.',
-                );
-                return { isAllowed: false, email: null };
-            }
-
-            const remnawaveSettings = await this.queryBus.execute(
-                new GetCachedRemnawaveSettingsQuery(),
-            );
-
-            const pocketIdClient = new arctic.OAuth2Client(
-                remnawaveSettings.oauth2Settings.pocketid.clientId!,
-                remnawaveSettings.oauth2Settings.pocketid.clientSecret!,
-                null,
-            );
-
-            const tokens = await pocketIdClient.validateAuthorizationCode(
-                `https://${remnawaveSettings.oauth2Settings.pocketid.plainDomain}/api/oidc/token`,
-                code,
-                null,
-            );
-
-            const claims = arctic.decodeIdToken(tokens.idToken());
-
-            const email = 'email' in claims ? claims.email : undefined;
-            if (typeof email !== 'string' || !email) {
-                await this.emitFailedLoginAttempt(
-                    'Missing',
-                    '–',
-                    ip,
-                    userAgent,
-                    'Invalid or missing email claim in PocketID ID token.',
-                );
-                return { isAllowed: false, email: null };
-            }
-
-            if (
-                REMNAWAVE_CUSTOM_CLAIM_KEY in claims &&
-                claims[REMNAWAVE_CUSTOM_CLAIM_KEY] === true
-            ) {
-                return { isAllowed: true, email };
-            }
-
-            if (remnawaveSettings.oauth2Settings.pocketid.allowedEmails.includes(email)) {
-                return { isAllowed: true, email };
-            }
-
+        if (stateFromCache !== state) {
             await this.emitFailedLoginAttempt(
-                email,
+                'Unknown',
+                `State: ${state}`,
+                ip,
+                userAgent,
+                `${provider} state mismatch.`,
+            );
+            return FAIL;
+        }
+
+        const settings: RemnawaveSettingsEntity = await this.queryBus.execute(
+            new GetCachedRemnawaveSettingsQuery(),
+        );
+
+        if (
+            ((provider === OAUTH2_PROVIDERS.GENERIC &&
+                settings.oauth2Settings.generic.withPkce &&
+                settings.oauth2Settings.generic.enabled) ||
+                provider === OAUTH2_PROVIDERS.KEYCLOAK) &&
+            !codeVerifier
+        ) {
+            await this.emitFailedLoginAttempt(
+                'Unknown',
                 '–',
                 ip,
                 userAgent,
-                'PocketID email is not in the allowed list and remnawaveClaim is not present.',
+                `${provider} code verifier not found.`,
             );
+            return FAIL;
+        }
 
-            return { isAllowed: false, email: null };
+        const emailResult = await this.exchangeCodeForEmail(provider, code, codeVerifier, settings);
+
+        if (!emailResult.email) {
+            await this.emitFailedLoginAttempt(
+                'Unknown',
+                '–',
+                ip,
+                userAgent,
+                emailResult.error ?? `Failed to get email from ${provider}.`,
+            );
+            return FAIL;
+        }
+
+        const allowedEmails = this.getAllowedEmails(provider, settings);
+
+        const isAllowed = emailResult.hasCustomClaim || allowedEmails.includes(emailResult.email);
+
+        if (!isAllowed) {
+            await this.emitFailedLoginAttempt(
+                emailResult.email,
+                '–',
+                ip,
+                userAgent,
+                `${provider} email not in allowed list and no remnawaveAccess claim}.`,
+            );
+            return FAIL;
+        }
+
+        return { isAllowed: true, email: emailResult.email };
+    }
+
+    private async exchangeCodeForEmail(
+        provider: TOAuth2ProvidersKeys,
+        code: string,
+        codeVerifier: string | undefined,
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; hasCustomClaim?: boolean; error?: string }> {
+        try {
+            switch (provider) {
+                case OAUTH2_PROVIDERS.GITHUB:
+                    return await this.fetchGithubEmail(code, settings);
+                case OAUTH2_PROVIDERS.YANDEX:
+                    return await this.fetchYandexEmail(code, settings);
+                case OAUTH2_PROVIDERS.POCKETID:
+                    return await this.fetchPocketIdEmail(code, settings);
+                case OAUTH2_PROVIDERS.KEYCLOAK:
+                    return await this.fetchKeycloakEmail(code, codeVerifier!, settings);
+                case OAUTH2_PROVIDERS.GENERIC:
+                    return await this.fetchGenericEmail(code, codeVerifier, settings);
+
+                default:
+                    return { email: null, error: 'Unknown provider' };
+            }
         } catch (error) {
-            this.logger.error(`PocketID callback error: ${error}`);
-            return { isAllowed: false, email: null };
+            this.logger.error(`${provider} token exchange error: ${error}`);
+            return { email: null, error: `Token exchange failed for ${provider}` };
         }
     }
 
-    private async yandexCallback(
+    private getAllowedEmails(
+        provider: TOAuth2ProvidersKeys,
+        settings: RemnawaveSettingsEntity,
+    ): string[] {
+        const map: Record<TOAuth2ProvidersKeys, string[]> = {
+            [OAUTH2_PROVIDERS.GITHUB]: settings.oauth2Settings.github.allowedEmails,
+            [OAUTH2_PROVIDERS.YANDEX]: settings.oauth2Settings.yandex.allowedEmails,
+            [OAUTH2_PROVIDERS.POCKETID]: settings.oauth2Settings.pocketid.allowedEmails,
+            [OAUTH2_PROVIDERS.KEYCLOAK]: settings.oauth2Settings.keycloak.allowedEmails,
+            [OAUTH2_PROVIDERS.GENERIC]: settings.oauth2Settings.generic.allowedEmails,
+        };
+        return map[provider] ?? [];
+    }
+
+    private async fetchGithubEmail(
         code: string,
-        state: string,
-        ip: string,
-        userAgent: string,
-    ): Promise<{
-        isAllowed: boolean;
-        email: string | null;
-    }> {
-        try {
-            const stateFromCache = await this.cacheManager.get<string>(
-                `oauth2:${OAUTH2_PROVIDERS.YANDEX}`,
-            );
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; error?: string }> {
+        const client = new arctic.GitHub(
+            settings.oauth2Settings.github.clientId!,
+            settings.oauth2Settings.github.clientSecret!,
+            null,
+        );
 
-            await this.cacheManager.del(`oauth2:${OAUTH2_PROVIDERS.YANDEX}`);
+        const tokens = await client.validateAuthorizationCode(code);
 
-            if (stateFromCache !== state) {
-                this.logger.error('OAuth2 state mismatch');
-                await this.emitFailedLoginAttempt(
-                    'Unknown',
-                    `State: ${state}`,
-                    ip,
-                    userAgent,
-                    'Yandex OAuth2 state mismatch.',
-                );
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
+        const { data } = await firstValueFrom(
+            this.httpService
+                .get<{ email: string; primary: boolean }[]>('https://api.github.com/user/emails', {
+                    headers: {
+                        Authorization: `Bearer ${tokens.accessToken()}`,
+                        'User-Agent': 'Remnawave',
+                    },
+                })
+                .pipe(
+                    catchError((e: AxiosError) => {
+                        throw e.response?.data;
+                    }),
+                ),
+        );
 
-            const remnawaveSettings = await this.queryBus.execute(
-                new GetCachedRemnawaveSettingsQuery(),
-            );
+        const email = data?.find((e) => e.primary)?.email ?? null;
+        return { email, error: email ? undefined : 'No primary email found' };
+    }
 
-            const yandexClient = new arctic.Yandex(
-                remnawaveSettings.oauth2Settings.yandex.clientId!,
-                remnawaveSettings.oauth2Settings.yandex.clientSecret!,
-                '',
-            );
+    private async fetchYandexEmail(
+        code: string,
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; error?: string }> {
+        const client = new arctic.Yandex(
+            settings.oauth2Settings.yandex.clientId!,
+            settings.oauth2Settings.yandex.clientSecret!,
+            '',
+        );
 
-            const tokens = await yandexClient.validateAuthorizationCode(code);
-            const accessToken = tokens.accessToken();
+        const tokens = await client.validateAuthorizationCode(code);
 
-            const { data } = await firstValueFrom(
-                this.httpService
-                    .get<{
-                        default_email: string;
-                    }>('https://login.yandex.ru/info?format=json', {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                            'User-Agent': 'Remnawave',
-                        },
-                    })
-                    .pipe(
-                        catchError((error: AxiosError) => {
-                            throw error.response?.data;
-                        }),
-                    ),
-            );
+        const { data } = await firstValueFrom(
+            this.httpService
+                .get<{ default_email: string }>('https://login.yandex.ru/info?format=json', {
+                    headers: {
+                        Authorization: `Bearer ${tokens.accessToken()}`,
+                        'User-Agent': 'Remnawave',
+                    },
+                })
+                .pipe(
+                    catchError((e: AxiosError) => {
+                        throw e.response?.data;
+                    }),
+                ),
+        );
 
-            if (!data) {
-                this.logger.error('Failed to fetch Yandex user info');
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
+        const email = data?.default_email ?? null;
+        return { email, error: email ? undefined : 'No email found' };
+    }
 
-            const primaryEmail = data.default_email;
+    private async fetchPocketIdEmail(
+        code: string,
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; hasCustomClaim?: boolean; error?: string }> {
+        const client = await this.getGenericOAuth2Client(settings, true);
 
-            if (!primaryEmail) {
-                await this.emitFailedLoginAttempt(
-                    'Unknown',
-                    '–',
-                    ip,
-                    userAgent,
-                    'No primary email found for Yandex user.',
-                );
-                this.logger.error('No primary email found for Yandex user');
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
+        const tokens = await client.validateAuthorizationCode(
+            `https://${settings.oauth2Settings.pocketid.plainDomain}/api/oidc/token`,
+            code,
+            null,
+        );
 
-            if (!remnawaveSettings.oauth2Settings.yandex.allowedEmails.includes(primaryEmail)) {
-                await this.emitFailedLoginAttempt(
-                    primaryEmail,
-                    '–',
-                    ip,
-                    userAgent,
-                    'Yandex email is not in the allowed list.',
-                );
-                return {
-                    isAllowed: false,
-                    email: null,
-                };
-            }
+        return this.extractEmailFromIdToken(tokens.idToken());
+    }
 
-            return {
-                isAllowed: true,
-                email: primaryEmail,
-            };
-        } catch (error) {
-            this.logger.error(`Yandex callback error: ${error}`);
+    private async fetchKeycloakEmail(
+        code: string,
+        codeVerifier: string,
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; hasCustomClaim?: boolean; error?: string }> {
+        const client = await this.getKeyCloakClient(settings);
 
-            return {
-                isAllowed: false,
-                email: null,
-            };
+        const tokens = await client.validateAuthorizationCode(code, codeVerifier);
+
+        return this.extractEmailFromIdToken(tokens.idToken());
+    }
+
+    private async fetchGenericEmail(
+        code: string,
+        codeVerifier: string | undefined,
+        settings: RemnawaveSettingsEntity,
+    ): Promise<{ email: string | null; hasCustomClaim?: boolean; error?: string }> {
+        if (settings.oauth2Settings.generic.withPkce && !codeVerifier) {
+            return { email: null, error: 'Code verifier required for PKCE' };
         }
+
+        const client = await this.getGenericOAuth2Client(settings);
+
+        const tokens = await client.validateAuthorizationCode(
+            settings.oauth2Settings.generic.tokenUrl!,
+            code,
+            codeVerifier ?? null,
+        );
+
+        return this.extractEmailFromIdToken(tokens.idToken());
+    }
+
+    private extractEmailFromIdToken(idToken: string): {
+        email: string | null;
+        hasCustomClaim?: boolean;
+        error?: string;
+    } {
+        const claims = arctic.decodeIdToken(idToken);
+        const email = 'email' in claims && typeof claims.email === 'string' ? claims.email : null;
+        const hasCustomClaim =
+            REMNAWAVE_CUSTOM_CLAIM_KEY in claims && claims[REMNAWAVE_CUSTOM_CLAIM_KEY] === true;
+
+        return {
+            email,
+            hasCustomClaim,
+            error: email ? undefined : 'Missing email in ID token',
+        };
     }
 
     private async getAdminCount(): Promise<TResult<number>> {
@@ -1182,6 +1144,37 @@ export class AuthService {
         } catch (error) {
             this.logger.error(`Passkey authentication verification error: ${error}`);
             return fail(ERRORS.FORBIDDEN);
+        }
+    }
+
+    private async getKeyCloakClient(settings: RemnawaveSettingsEntity): Promise<arctic.KeyCloak> {
+        return new arctic.KeyCloak(
+            `https://${settings.oauth2Settings.keycloak.keycloakDomain!}/realms/${settings.oauth2Settings.keycloak.realm!}`,
+            settings.oauth2Settings.keycloak.clientId!,
+            settings.oauth2Settings.keycloak.clientSecret!,
+            `https://${settings.oauth2Settings.keycloak.frontendDomain!}/${AUTH_ROUTES.OAUTH2.CALLBACK}/${OAUTH2_PROVIDERS.KEYCLOAK}`,
+        );
+    }
+
+    private async getGenericOAuth2Client(
+        settings: RemnawaveSettingsEntity,
+        isPocketId: boolean = false,
+    ): Promise<arctic.OAuth2Client> {
+        if (isPocketId) {
+            const { clientId, clientSecret } = settings.oauth2Settings.pocketid;
+            if (!clientId || !clientSecret) {
+                throw new Error('PocketID OAuth2 clientId or clientSecret not configured.');
+            }
+            return new arctic.OAuth2Client(clientId, clientSecret, null);
+        } else {
+            const { clientId, clientSecret, frontendDomain } = settings.oauth2Settings.generic;
+            if (!clientId || !clientSecret || !frontendDomain) {
+                throw new Error(
+                    'Generic OAuth2 config is incomplete (clientId, clientSecret, frontendDomain).',
+                );
+            }
+            const redirectUrl = `https://${frontendDomain}/${AUTH_ROUTES.OAUTH2.CALLBACK}/${OAUTH2_PROVIDERS.GENERIC}`;
+            return new arctic.OAuth2Client(clientId, clientSecret, redirectUrl);
         }
     }
 }

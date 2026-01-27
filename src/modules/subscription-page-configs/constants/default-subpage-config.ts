@@ -4,16 +4,17 @@ export const DEFAULT_SUBPAGE_CONFIG = {
     brandingSettings: {
         title: 'Subscription',
         logoUrl: 'https://docs.rw/img/logo.svg',
-        supportUrl: 'https://t.me/remnawave',
+        supportUrl: 'https://dummy.docs.rw',
     },
     uiConfig: {
         subscriptionInfoBlockType: 'expanded',
         installationGuidesBlockType: 'cards',
     },
     baseSettings: {
-        metaTitle: 'Remnawave Subscription Page',
-        metaDescription: 'Remnawave Subscription Page',
+        metaTitle: 'Subscription',
+        metaDescription: 'Subscription',
         showConnectionKeys: false,
+        hideGetLinkButton: false,
     },
     baseTranslations: {
         installationGuideHeader: {
@@ -31,7 +32,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
             zh: '连接密钥',
         },
         linkCopied: {
-            en: 'Likn copied',
+            en: 'Link copied',
             ru: 'Ссылка скопирована',
             fr: 'Lien copié',
             fa: 'لینک کپی شد',
@@ -620,7 +621,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                             },
                             buttons: [
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-linux-amd64.deb',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-linux-amd64.deb',
                                     text: {
                                         en: 'amd64 (.deb)',
                                         fa: 'amd64 (.deb)',
@@ -632,7 +633,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                                     svgIconKey: 'ExternalLink',
                                 },
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-linux-amd64.AppImage',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-linux-amd64.AppImage',
                                     text: {
                                         en: 'amd64 (AppImage)',
                                         fa: 'amd64 (AppImage)',
@@ -644,7 +645,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                                     svgIconKey: 'ExternalLink',
                                 },
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-linux-amd64.rpm',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-linux-amd64.rpm',
                                     text: {
                                         en: 'amd64 (.rpm)',
                                         fa: 'amd64 (.rpm)',
@@ -656,7 +657,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                                     svgIconKey: 'ExternalLink',
                                 },
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-linux-arm64.deb',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-linux-arm64.deb',
                                     text: {
                                         en: 'arm64 (.deb)',
                                         fa: 'arm64 (.deb)',
@@ -1207,7 +1208,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                             },
                             buttons: [
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-macos-arm64.dmg',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-macos-arm64.dmg',
                                     text: {
                                         en: 'macOS (Apple Silicon)',
                                         fa: 'مک (Apple Silicon)',
@@ -1219,7 +1220,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                                     svgIconKey: 'ExternalLink',
                                 },
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-macos-amd64.dmg',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-macos-amd64.dmg',
                                     text: {
                                         en: 'macOS (Intel)',
                                         fa: 'مک (اینتل)',
@@ -1735,7 +1736,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                             },
                             buttons: [
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-android-arm64-v8a.apk',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-android-universal.apk',
                                     text: {
                                         en: 'Download APK',
                                         fa: 'دانلود APK',
@@ -2393,7 +2394,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                             },
                             buttons: [
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-windows-amd64-setup.exe',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-windows-amd64-setup.exe',
                                     text: {
                                         en: 'Windows (Setup)',
                                         fa: 'ویندوز (نصب)',
@@ -2405,7 +2406,7 @@ export const DEFAULT_SUBPAGE_CONFIG = {
                                     svgIconKey: 'ExternalLink',
                                 },
                                 {
-                                    link: 'https://github.com/pluralplay/FlClashX/releases/download/v0.2.1/FlClashX-0.2.1-windows-arm64-setup.exe',
+                                    link: 'https://github.com/pluralplay/FlClashX/releases/latest/download/FlClashX-windows-arm64-setup.exe',
                                     text: {
                                         en: 'Windows on ARM (Setup)',
                                         fa: 'ویندوز ARM (نصب)',

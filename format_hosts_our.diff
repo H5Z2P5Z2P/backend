@@ -1,0 +1,30 @@
+diff --git a/src/modules/subscription-template/generators/format-hosts.service.ts b/src/modules/subscription-template/generators/format-hosts.service.ts
+index c5fdbf60..acdaacd8 100644
+--- a/src/modules/subscription-template/generators/format-hosts.service.ts
++++ b/src/modules/subscription-template/generators/format-hosts.service.ts
+@@ -17,6 +17,7 @@ import {
+     resolveEncryptionFromDecryption,
+     resolveInboundAndMlDsa65PublicKey,
+     resolveInboundAndPublicKey,
++    resolveSSServerPassword,
+ } from '@common/helpers/xray-config';
+ import { RawObject } from '@common/helpers/xray-config/interfaces/transport.config';
+ import { TemplateEngine } from '@common/utils/templates/replace-templates-values';
+@@ -121,6 +122,9 @@ export class FormatHostsService {
+         const encryptionMap = await resolveEncryptionFromDecryption(
+             hosts.map((host) => host.rawInbound),
+         );
++        const ssServerPasswordMap = await resolveSSServerPassword(
++            hosts.map((host) => host.rawInbound),
++        );
+ 
+         const knownRemarks = new Map<string, number>();
+ 
+@@ -464,6 +468,7 @@ export class FormatHostsService {
+                 dbData,
+                 mldsa65Verify: mldsa65PublicKeyFromConfig,
+                 encryption: encryptionMap.get(inputHost.inboundTag),
++                ssServerPassword: ssServerPasswordMap.get(inputHost.inboundTag),
+                 flow: getVlessFlow(inbound),
+                 xrayJsonTemplate: inputHost.xrayJsonTemplate,
+             });

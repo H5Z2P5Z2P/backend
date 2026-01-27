@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { TemplateEngine } from '@common/utils/templates/replace-templates-values';
 import { prettyBytesUtil } from '@common/utils/bytes/pretty-bytes.util';
 import { HwidHeaders } from '@common/utils/extract-hwid-headers';
+import { hasContent } from '@common/utils/convert-type';
 import { fail, ok, TResult } from '@common/types';
 import { ERRORS, EVENTS, TSubscriptionTemplateType, USERS_STATUS } from '@libs/contracts/constants';
 import { THwidSettings } from '@libs/contracts/models';
@@ -162,8 +163,33 @@ export class SubscriptionService {
 
                     if (subscriptionSettings.hwidSettings.maxDevicesAnnounce) {
                         response.headers.announce = `base64:${Buffer.from(
-                            subscriptionSettings.hwidSettings.maxDevicesAnnounce,
+                            TemplateEngine.formatWithUser(
+                                subscriptionSettings.hwidSettings.maxDevicesAnnounce,
+                                user.response,
+                                this.subPublicDomain,
+                            ),
                         ).toString('base64')}`;
+                    }
+
+                    if (
+                        (isAllowed.response.maxDeviceReached ||
+                            isAllowed.response.hwidNotSupported) &&
+                        subscriptionSettings.isShowCustomRemarks
+                    ) {
+                        const { subscription, contentType } =
+                            await this.renderTemplatesService.generateSubscription({
+                                srrContext,
+                                user: user.response,
+                                hosts: [],
+                                fallbackOptions: {
+                                    showHwidMaxDeviceRemarks: isAllowed.response.maxDeviceReached,
+                                    showHwidNotSupportedRemarks:
+                                        isAllowed.response.hwidNotSupported,
+                                },
+                            });
+
+                        response.body = subscription;
+                        response.contentType = contentType;
                     }
 
                     response.headers['x-hwid-limit'] = 'true'; // v2rayTUN
@@ -644,12 +670,12 @@ export class SubscriptionService {
 
                 if (externalSquadSubscriptionSettings !== null) {
                     // Host overrides
-                    if (externalSquadSubscriptionSettings.hostOverrides !== null) {
+                    if (hasContent(externalSquadSubscriptionSettings.hostOverrides)) {
                         hostsOverrides = externalSquadSubscriptionSettings.hostOverrides;
                     }
 
                     // Subscription settings override
-                    if (externalSquadSubscriptionSettings.subscriptionSettings !== null) {
+                    if (hasContent(externalSquadSubscriptionSettings.subscriptionSettings)) {
                         patchedSubscriptionSettings = {
                             ...patchedSubscriptionSettings,
                             ...externalSquadSubscriptionSettings.subscriptionSettings,
@@ -657,22 +683,19 @@ export class SubscriptionService {
                     }
 
                     // Response headers override
-                    if (
-                        externalSquadSubscriptionSettings.responseHeaders !== null &&
-                        Object.keys(externalSquadSubscriptionSettings.responseHeaders).length > 0
-                    ) {
+                    if (hasContent(externalSquadSubscriptionSettings.responseHeaders)) {
                         patchedSubscriptionSettings.customResponseHeaders =
                             externalSquadSubscriptionSettings.responseHeaders;
                     }
 
                     // HWID settings override
-                    if (externalSquadSubscriptionSettings.hwidSettings !== null) {
+                    if (hasContent(externalSquadSubscriptionSettings.hwidSettings)) {
                         patchedSubscriptionSettings.hwidSettings =
                             externalSquadSubscriptionSettings.hwidSettings;
                     }
 
                     // Custom remarks override
-                    if (externalSquadSubscriptionSettings.customRemarks !== null) {
+                    if (hasContent(externalSquadSubscriptionSettings.customRemarks)) {
                         patchedSubscriptionSettings.customRemarks =
                             externalSquadSubscriptionSettings.customRemarks;
                     }
@@ -722,6 +745,8 @@ export class SubscriptionService {
     ): Promise<
         TResult<{
             isSubscriptionAllowed: boolean;
+            maxDeviceReached: boolean;
+            hwidNotSupported: boolean;
         }>
     > {
         try {
@@ -736,11 +761,19 @@ export class SubscriptionService {
                         userAgent: hwidHeaders.userAgent,
                     });
                 }
-                return ok({ isSubscriptionAllowed: true });
+                return ok({
+                    isSubscriptionAllowed: true,
+                    maxDeviceReached: false,
+                    hwidNotSupported: false,
+                });
             }
 
             if (hwidHeaders === null) {
-                return ok({ isSubscriptionAllowed: false });
+                return ok({
+                    isSubscriptionAllowed: false,
+                    maxDeviceReached: false,
+                    hwidNotSupported: true,
+                });
             }
 
             const isDeviceExists = await this.checkHwidDeviceExists({
@@ -759,7 +792,11 @@ export class SubscriptionService {
                         userAgent: hwidHeaders.userAgent,
                     });
 
-                    return ok({ isSubscriptionAllowed: true });
+                    return ok({
+                        isSubscriptionAllowed: true,
+                        maxDeviceReached: false,
+                        hwidNotSupported: false,
+                    });
                 }
             }
 
@@ -768,11 +805,19 @@ export class SubscriptionService {
             const deviceLimit = user.hwidDeviceLimit ?? hwidSettings.fallbackDeviceLimit;
 
             if (!count.isOk) {
-                return ok({ isSubscriptionAllowed: false });
+                return ok({
+                    isSubscriptionAllowed: false,
+                    maxDeviceReached: true,
+                    hwidNotSupported: false,
+                });
             }
 
             if (count.response >= deviceLimit) {
-                return ok({ isSubscriptionAllowed: false });
+                return ok({
+                    isSubscriptionAllowed: false,
+                    maxDeviceReached: true,
+                    hwidNotSupported: false,
+                });
             }
 
             const result = await this.commandBus.execute(
@@ -791,7 +836,11 @@ export class SubscriptionService {
             if (!result.isOk) {
                 this.logger.error(`Error creating Hwid user device, access forbidden.`);
 
-                return ok({ isSubscriptionAllowed: false });
+                return ok({
+                    isSubscriptionAllowed: false,
+                    maxDeviceReached: true,
+                    hwidNotSupported: false,
+                });
             }
 
             this.eventEmitter.emit(
@@ -799,10 +848,18 @@ export class SubscriptionService {
                 new UserHwidDeviceEvent(user, result.response, EVENTS.USER_HWID_DEVICES.ADDED),
             );
 
-            return ok({ isSubscriptionAllowed: true });
+            return ok({
+                isSubscriptionAllowed: true,
+                maxDeviceReached: false,
+                hwidNotSupported: false,
+            });
         } catch (error) {
             this.logger.error(`Error checking hwid device limit: ${error}`);
-            return ok({ isSubscriptionAllowed: false });
+            return ok({
+                isSubscriptionAllowed: false,
+                maxDeviceReached: true,
+                hwidNotSupported: false,
+            });
         }
     }
 
